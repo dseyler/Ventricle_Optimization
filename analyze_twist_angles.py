@@ -1,0 +1,455 @@
+#!/usr/bin/env python3
+"""
+Script to analyze twist angles in ventricular simulations.
+
+This script demonstrates how to use the twist angle calculation functions
+from process_results_functions.py to analyze ventricular twist during cardiac cycles.
+
+Author: Assistant
+Date: 2024
+"""
+
+import os
+import sys
+import numpy as np
+import matplotlib.pyplot as plt
+import pyvista as pv
+from process_results_functions import (
+    calc_twist_angle, 
+    calc_volume_3D,
+    visualize_twist_angle_calculation,
+    plot_twist_angles_vs_time,
+    plot_twist_angles_vs_z,
+    get_start_end_step,
+    get_timestep_size
+)
+
+def analyze_twist_angles_example(reference_surface=None):
+    """
+    Example function demonstrating how to use the twist angle analysis functions.
+    
+    Args:
+        reference_surface: Path to the reference surface file. If None, uses default.
+    """
+    
+    # ===== CONFIGURATION =====
+    # Update these paths to match your simulation setup
+    
+    # Simulation results folder (usually contains result_XXX.vtu files)
+    results_folder = "results_8_30"  # Update this path
+    
+    # Reference surface file (undeformed surface)
+    if reference_surface is None:
+        reference_surface = "meshes/ventricle_MC_200_8_30_5d5mm-mesh-complete/mesh-surfaces/epi.vtp"  # Default path
+    
+    # Output directory for plots and intermediate data
+    output_dir = results_folder + "/twist_analysis_output"
+    
+    # Create output directory if it doesn't exist
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    # ===== PARAMETERS =====
+    # Define z-levels for twist analysis (in mm)
+    # These should be within the z-range of your ventricle
+    z_levels = None #np.array([-25, -20, -15, -10, -5, 0])
+    
+    # Tolerance for finding points near the xz plane and z-levels
+    tolerance = 0.5  # mm
+    
+    # Whether to save intermediate data
+    save_intermediate_data = True
+    intermediate_output_folder = os.path.join(output_dir, "intermediate_data")
+    
+    print("=== Ventricular Twist Angle Analysis ===")
+    print(f"Results folder: {results_folder}")
+    print(f"Reference surface: {reference_surface}")
+    print(f"Z-levels: {z_levels}")
+    print(f"Output directory: {output_dir}")
+    
+    # ===== CHECK FILES EXIST =====
+    if not os.path.exists(results_folder):
+        print(f"ERROR: Results folder not found: {results_folder}")
+        return
+    
+    if not os.path.exists(reference_surface):
+        print(f"ERROR: Reference surface not found: {reference_surface}")
+        return
+    
+    # ===== GET SIMULATION PARAMETERS =====
+    try:
+        # Get start, end, and step from results folder
+        start_timestep, end_timestep, step = get_start_end_step(results_folder)
+        print(f"Found timesteps: {start_timestep} to {end_timestep} with step {step}")
+        
+        # Get timestep size (you may need to provide this manually)
+        # timestep_size = get_timestep_size("solver.xml")  # Uncomment if you have solver.xml
+        timestep_size = 0.001  # seconds - update this to match your simulation
+        
+    except Exception as e:
+        print(f"Warning: Could not automatically determine simulation parameters: {e}")
+        print("Using default values. Please update manually if needed.")
+        start_timestep = 10
+        end_timestep = 100
+        step = 5
+        timestep_size = 0.001
+    
+    # ===== CALCULATE TWIST ANGLES =====
+    print("\n=== Calculating Twist Angles ===")
+    
+    try:
+        t, twist_angles, z_levels_used = calc_twist_angle(
+            start_timestep=start_timestep,
+            end_timestep=end_timestep,
+            step=step,
+            timestep_size=timestep_size,
+            results_folder=results_folder,
+            reference_surface=reference_surface,
+            z_levels=z_levels,
+            save_intermediate_data=save_intermediate_data,
+            intermediate_output_folder=intermediate_output_folder,
+            tolerance=tolerance
+        )
+        
+        print(f"Successfully calculated twist angles for {len(t)} time points")
+        print(f"Z-levels used: {z_levels_used}")
+        
+    except Exception as e:
+        print(f"ERROR: Failed to calculate twist angles: {e}")
+        return
+    
+    # ===== VISUALIZE THE CALCULATION =====
+    print("\n=== Creating Visualization ===")
+    
+    try:
+        # Load reference surface for visualization
+        ref_surface = pv.read(reference_surface)
+        
+        # Create visualization of how twist angles are calculated
+        plotter = visualize_twist_angle_calculation(
+            surface=ref_surface,
+            z_levels=z_levels_used,
+            output_file=os.path.join(output_dir, "twist_calculation_visualization.png")
+        )
+        
+        print("Visualization saved to: twist_calculation_visualization.png")
+        
+        # Uncomment to show the plot interactively
+        # plotter.show()
+        
+    except Exception as e:
+        print(f"Warning: Could not create visualization: {e}")
+    
+    # ===== CREATE PLOTS =====
+    print("\n=== Creating Plots ===")
+    
+    try:
+        # Plot 1: Twist angles vs time for different z-levels
+        fig1 = plot_twist_angles_vs_time(
+            t=t,
+            twist_angles=twist_angles,
+            z_levels=z_levels_used,
+            output_file=os.path.join(output_dir, "twist_angles_vs_time.png"),
+            title="Ventricular Twist Angles vs Time"
+        )
+        
+        # Plot 2: Twist angles vs z-coordinate at different time points
+        # Select a few representative time points
+        time_indices = [0, len(t)//4, len(t)//2, 3*len(t)//4, len(t)-1]
+        fig2 = plot_twist_angles_vs_z(
+            t=t,
+            twist_angles=twist_angles,
+            z_levels=z_levels_used,
+            time_indices=time_indices,
+            output_file=os.path.join(output_dir, "twist_angles_vs_z.png"),
+            title="Twist Angles vs Z-coordinate at Different Times"
+        )
+        
+        print("Plots saved to:")
+        print("  - twist_angles_vs_time.png")
+        print("  - twist_angles_vs_z.png")
+        
+        # ===== CALCULATE VOLUME AND CREATE VOLUME PLOT =====
+        print("\n=== Calculating Volume and Creating Volume Plot ===")
+        
+        try:
+            # Calculate volume using the same parameters
+            t_vol, volumes = calc_volume_3D(
+                start_timestep=start_timestep,
+                end_timestep=end_timestep,
+                step=step,
+                timestep_size=timestep_size,
+                results_folder=results_folder,
+                reference_surface=reference_surface,
+                save_intermediate_data=save_intermediate_data,
+                intermediate_output_folder=intermediate_output_folder
+            )
+            
+            print(f"Volume calculation complete. Time points: {len(t_vol)}, Volume points: {len(volumes)}")
+            
+            # Create twist angle vs volume plot
+            fig3 = plot_twist_angles_vs_volume(
+                t=t,
+                twist_angles=twist_angles,
+                volumes=volumes,
+                z_levels=z_levels_used,
+                output_file=os.path.join(output_dir, "twist_angles_vs_volume.png"),
+                title="Twist Angles vs Ventricular Volume"
+            )
+            
+            print("  - twist_angles_vs_volume.png")
+            
+            # Update data file to include volume
+            data_file = os.path.join(output_dir, "twist_angles_data.npz")
+            np.savez(data_file, 
+                     time=t, 
+                     twist_angles=twist_angles, 
+                     z_levels=z_levels_used,
+                     volumes=volumes)
+            
+        except Exception as e:
+            print(f"Warning: Could not calculate volume or create volume plot: {e}")
+        
+    except Exception as e:
+        print(f"Warning: Could not create plots: {e}")
+    
+    # ===== ANALYZE RESULTS =====
+    print("\n=== Analyzing Results ===")
+    
+    try:
+        # Calculate some basic statistics
+        print("Twist angle statistics:")
+        for i, z in enumerate(z_levels_used):
+            angles = [angle for angle in twist_angles[i] if angle is not None]
+            if angles:
+                mean_angle = np.mean(angles)
+                max_angle = np.max(angles)
+                min_angle = np.min(angles)
+                angle_range = max_angle - min_angle
+                print(f"  Z={z:.1f}: mean={mean_angle:.1f}°, range={angle_range:.1f}°, "
+                      f"min={min_angle:.1f}°, max={max_angle:.1f}°")
+            else:
+                print(f"  Z={z:.1f}: No valid data")
+        
+        # Find maximum twist at each z-level
+        max_twist_by_z = []
+        for i, z in enumerate(z_levels_used):
+            angles = [angle for angle in twist_angles[i] if angle is not None]
+            if angles:
+                max_twist_by_z.append((z, np.max(angles)))
+        
+        if max_twist_by_z:
+            max_twist_z, max_twist_angle = max(max_twist_by_z, key=lambda x: x[1])
+            print(f"\nMaximum twist: {max_twist_angle:.1f}° at Z={max_twist_z:.1f}")
+        
+    except Exception as e:
+        print(f"Warning: Could not analyze results: {e}")
+    
+    # ===== SAVE DATA =====
+    print("\n=== Saving Data ===")
+    
+    try:
+        # Save twist angle data to numpy file
+        data_file = os.path.join(output_dir, "twist_angles_data.npz")
+        np.savez(data_file, 
+                 time=t, 
+                 twist_angles=twist_angles, 
+                 z_levels=z_levels_used)
+        print(f"Data saved to: {data_file}")
+        
+        # Save summary to text file
+        summary_file = os.path.join(output_dir, "twist_analysis_summary.txt")
+        with open(summary_file, 'w') as f:
+            f.write("Ventricular Twist Angle Analysis Summary\n")
+            f.write("=" * 40 + "\n\n")
+            f.write(f"Results folder: {results_folder}\n")
+            f.write(f"Reference surface: {reference_surface}\n")
+            f.write(f"Time points: {len(t)}\n")
+            f.write(f"Z-levels: {z_levels_used}\n")
+            f.write(f"Time range: {t[0]:.3f}s to {t[-1]:.3f}s\n\n")
+            
+            f.write("Twist angle statistics:\n")
+            for i, z in enumerate(z_levels_used):
+                angles = [angle for angle in twist_angles[i] if angle is not None]
+                if angles:
+                    mean_angle = np.mean(angles)
+                    max_angle = np.max(angles)
+                    min_angle = np.min(angles)
+                    angle_range = max_angle - min_angle
+                    f.write(f"  Z={z:.1f}: mean={mean_angle:.1f}°, range={angle_range:.1f}°, "
+                           f"min={min_angle:.1f}°, max={max_angle:.1f}°\n")
+        
+        print(f"Summary saved to: {summary_file}")
+        
+    except Exception as e:
+        print(f"Warning: Could not save data: {e}")
+    
+    print("\n=== Analysis Complete ===")
+    print(f"All outputs saved to: {output_dir}")
+
+
+def analyze_multiple_simulations():
+    """
+    Example function to analyze twist angles from multiple simulations.
+    Useful for comparing different ventricular geometries or parameters.
+    """
+    
+    # Define simulation configurations to compare
+    simulations = [
+        {
+            'name': '8_20',
+            'results_folder': 'results_8_20',
+            'reference_surface': 'meshes/ventricle_MC_200_8_20_0d6mm-mesh-complete/mesh-surfaces/epi.vtp',
+            'color': 'blue'
+        },
+        {
+            'name': '8_30',
+            'results_folder': 'results_8_30',
+            'reference_surface': 'meshes/ventricle_MC_200_8_30_5d5mm-mesh-complete/mesh-surfaces/epi.vtp',
+            'color': 'red'
+        }
+    ]
+    
+    z_levels = np.array([-25, -20, -15, -10, -5, 0])
+    timestep_size = 0.001
+    
+    # Collect data from all simulations
+    all_data = {}
+    
+    for sim in simulations:
+        print(f"\n=== Analyzing {sim['name']} ===")
+        
+        if not os.path.exists(sim['results_folder']):
+            print(f"Warning: Results folder not found: {sim['results_folder']}")
+            continue
+        
+        try:
+            start_timestep, end_timestep, step = get_start_end_step(sim['results_folder'])
+            
+            t, twist_angles, z_levels_used = calc_twist_angle(
+                start_timestep=start_timestep,
+                end_timestep=end_timestep,
+                step=step,
+                timestep_size=timestep_size,
+                results_folder=sim['results_folder'],
+                reference_surface=sim['reference_surface'],
+                z_levels=z_levels
+            )
+            
+            all_data[sim['name']] = {
+                't': t,
+                'twist_angles': twist_angles,
+                'z_levels': z_levels_used,
+                'color': sim['color']
+            }
+            
+            print(f"Successfully analyzed {sim['name']}")
+            
+        except Exception as e:
+            print(f"Error analyzing {sim['name']}: {e}")
+    
+    # Create comparison plots
+    if len(all_data) > 1:
+        print("\n=== Creating Comparison Plots ===")
+        
+        # Plot twist angles vs time for comparison
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        for sim_name, data in all_data.items():
+            for i, z in enumerate(data['z_levels']):
+                angles = data['twist_angles'][i]
+                valid_indices = [j for j, angle in enumerate(angles) if angle is not None]
+                valid_times = [data['t'][j] for j in valid_indices]
+                valid_angles = [angles[j] for j in valid_indices]
+                
+                if valid_angles:
+                    ax.plot(valid_times, valid_angles, 
+                           color=data['color'], alpha=0.7,
+                           label=f'{sim_name} Z={z:.1f}')
+        
+        ax.set_xlabel('Time (s)', fontsize=12)
+        ax.set_ylabel('Twist Angle (degrees)', fontsize=12)
+        ax.set_title('Twist Angle Comparison Across Simulations', fontsize=14)
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('twist_comparison.png', dpi=300, bbox_inches='tight')
+        print("Comparison plot saved to: twist_comparison.png")
+
+
+def plot_twist_angles_vs_volume(t, twist_angles, volumes, z_levels, output_file=None, title="Twist Angle vs Volume"):
+    """
+    Plot twist angles as a function of volume for different z-levels.
+    
+    Args:
+        t: List of time points
+        twist_angles: List of twist angle arrays (one for each z-level)
+        volumes: List of volumes at each time point
+        z_levels: List of z-coordinates
+        output_file: Optional file path to save the plot
+        title: Plot title
+        
+    Returns:
+        fig: Matplotlib figure object
+    """
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Define colors for different z-levels
+    colors = plt.cm.viridis(np.linspace(0, 1, len(z_levels)))
+    
+    # Plot each z-level
+    for i, (z, angles) in enumerate(zip(z_levels, twist_angles)):
+        # Filter out None values and create valid data pairs
+        valid_data = []
+        for j, (angle, vol) in enumerate(zip(angles, volumes)):
+            if angle is not None and vol is not None:
+                valid_data.append((vol, angle))
+        
+        if valid_data:
+            volumes_valid, angles_valid = zip(*valid_data)
+            ax.plot(volumes_valid, angles_valid, color=colors[i], 
+                   label=f'Z={z:.1f}', linewidth=2, marker='o', markersize=4)
+    
+    ax.set_xlabel('Volume (mm³)', fontsize=12)
+    ax.set_ylabel('Twist Angle (degrees)', fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if output_file:
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    
+    return fig
+
+
+if __name__ == "__main__":
+    """
+    Main execution block.
+    """
+    print("Ventricular Twist Angle Analysis Script")
+    print("=" * 40)
+    
+    # Check if command line arguments are provided
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "compare":
+            print("Running multiple simulation comparison...")
+            analyze_multiple_simulations()
+        elif sys.argv[1] == "--help" or sys.argv[1] == "-h":
+            print("Usage:")
+            print("  python analyze_twist_angles.py                                    # Use default reference surface")
+            print("  python analyze_twist_angles.py <reference_surface_path>          # Specify reference surface")
+            print("  python analyze_twist_angles.py compare                           # Run multiple simulation comparison")
+            print("\nExamples:")
+            print("  python analyze_twist_angles.py meshes/ventricle_MC_200_8_20_0d6mm-mesh-complete/mesh-surfaces/epi.vtp")
+            print("  python analyze_twist_angles.py meshes/ventricle_MC_200_8_30_5d5mm-mesh-complete/mesh-surfaces/epi.vtp")
+        else:
+            # Assume the argument is a reference surface path
+            reference_surface = sys.argv[1]
+            print(f"Using reference surface: {reference_surface}")
+            print("Running single simulation analysis...")
+            analyze_twist_angles_example(reference_surface)
+    else:
+        print("Running single simulation analysis with default reference surface...")
+        analyze_twist_angles_example() 
