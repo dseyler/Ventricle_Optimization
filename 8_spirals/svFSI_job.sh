@@ -47,7 +47,7 @@ python3 -u generate_pressure.py
 
 MESH_BASE="meshes"
 
-for mesh_dir in $MESH_BASE/*8_30_e-mesh-complete; do
+for mesh_dir in $MESH_BASE/*8_30_c-mesh-complete; do
     if [ -d "$mesh_dir" ]; then
         for pressure_file in pressure_*.dat; do
             echo "Processing $mesh_dir with $pressure_file"

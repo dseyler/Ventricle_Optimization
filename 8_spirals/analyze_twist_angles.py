@@ -342,7 +342,7 @@ def analyze_twist_angles_example(reference_surface=None, pressure_file=None):
             f.write(f"Final Circumferential Strain: {radial_strains[-1]}\n")
             f.write(f"Final Longitudinal Strain: {longitudinal_strains[-1]}\n")
             f.write(f"Final Twist Angle: {final_twist_angle}\n")
-
+        
         print(f"Summary saved to: {summary_file}")
         
     except Exception as e:
@@ -547,8 +547,8 @@ if __name__ == "__main__":
     print("=" * 40)
     
     if args.compare:
-        print("Running multiple simulation comparison...")
-        analyze_multiple_simulations()
+            print("Running multiple simulation comparison...")
+            analyze_multiple_simulations()
     else:
         print("Running single simulation analysis...")
         analyze_twist_angles_example(args.reference_surface, args.pressure_file) 

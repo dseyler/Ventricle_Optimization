@@ -6,16 +6,39 @@ from functools import partial
 import time
 import pyvista as pv
 import os
-from convert_obj_to_vtp import convert_obj_to_vtp
-import trimesh
+#import trimesh
 from scipy.optimize import minimize
 import concurrent.futures
 
+
+roof_thickness = 2.0
+tip_thickness = 1.6
+
+def circumferential_support(x, y, z, z_pos = np.array([-roof_thickness - 4.5, -roof_thickness - 12]), r_z = 0.75):
+    #signed distance function for a torus
+    #x, y, z are the coordinates of the point
+    #z_pos is the list of z positions of the the tori
+    #r_z is the radius of the torus tube
+
+    r_xyi = 12.2
+    r_zi = 29.7
+
+    #calculate radius of ellipse at each z_pos
+
+    r_xy = r_xyi * np.sqrt(1 - (z_pos/r_zi)**2)
+
+    r = np.sqrt(x**2 + y**2)
+
+    distances = np.sqrt((r-r_xy)**2 + (z - z_pos)**2) - r_z
+
+    return np.min(distances)
+
+
 def spiral_support(x, y, z, n_spirals=8, helix_angle=30, on_surface=False):
-    tube_radius = 0.45 * np.sqrt(2) # to preserve cross-sectional area
+    tube_radius = 1.0 #* np.sqrt(2) #0.45 * np.sqrt(2) # to preserve cross-sectional area
     a = 12.2  # x, y radius of ellipsoid path
-    z_start = -0.8 - 2*tube_radius # where the spiral starts
-    z_end = -30.5 + 5 # where the spiral ends
+    z_start = -roof_thickness - 1.5 - tube_radius # where the spiral starts
+    z_end = -30.5 + 4 + tube_radius # where the spiral ends
     top = 0 # top of ellipsoid path
     bottom = -29.7 # bottom of ellipsoid path
 
@@ -102,7 +125,7 @@ def spiral_support(x, y, z, n_spirals=8, helix_angle=30, on_surface=False):
         min_dist = iterative_refinement_minimum(x, y, z, theta_start, z_search_min, z_search_max)
 
         # if the minimum distance is already close to a tube, return it
-        if min_dist < tube_radius:
+        if min_dist < 0:
             return min_dist
         
         val = min(val, min_dist)
@@ -139,49 +162,67 @@ def ellipse(x, y, z, r_xy, r_z):
     else:
         return dist   # Outside ellipsoid
 
-def f(x, y, z, n_spirals=8, helix_angle=30, on_surface=False):
+def f(x, y, z, n_spirals=8, helix_angle=30, on_surface=False, torus=False):
     # Shell function with roof: 0 isosurface is between two ellipses and below z=0, 
-    # plus a roof between z=0 and z=-0.8
+    # plus a roof between z=0 and z=-roof_thickness
     # Returns negative values inside the shell, positive outside, zero on shell surface
     r_zo = 30.5
     r_xyo = 13
     r_zi = 29.7
     r_xyi = 12.2
-    
     # Define the two ellipsoids
     outer_ellipse = ellipse(x, y, z, r_xyo, r_zo)
     inner_ellipse = ellipse(x, y, z, r_xyi, r_zi)
+
+    #tip ellipse
+    #tip ellipse lies tangent to the inner ellipse where supports end
+    z_end = -30.5 + 4
+    z_tip = -r_zi + tip_thickness
+    A2 = (a**2 * (r_zi**2 - z_end * z_tip)**2) / (r_zi**2 * (r_zi**2 + z_end**2 - 2*z_end*z_tip))
+    B2 = ((r_zi**2 - z_end * z_tip) * (z_end - z_tip))**2 / (r_zi**2 + z_end**2 - 2*z_end*z_tip)**2
+    k = (z_end * (r_zi**2 - z_tip**2)) / (r_zi**2 + z_end**2 - 2*z_end*z_tip)
+
+    A, B = np.sqrt(A2), np.sqrt(B2)
+
+    tip_ellipse = ellipse(x, y, z, A, B)
+
+    inner_surface = max(inner_ellipse, tip_ellipse)
 
     #tube cylinder of r= 2mm
     tube = x**2 + y**2 - 1**2
     
     # Define the z planes
     z_top = z  # z=0 plane
-    z_bottom = -0.8 - z  # z=-0.8 plane
+    z_bottom = -roof_thickness - z  # z=-roof_thickness plane
     
-    # Check if we're in the roof region (between z=0 and z=-0.8)
-    in_roof_region = (z <= 0) and (z >= -0.8)
+    # Check if we're in the roof region (between z=0 and z=-roof_thickness)
+    in_roof_region = (z <= 0) and (z >= -roof_thickness)
     
-    if z >= -0.8:
+    if z >= -roof_thickness:
         # In roof region: use the ellipsoid shell logic
         val = max(outer_ellipse, z_top, -tube, z_bottom)
     else:
         # Outside roof region: use original shell logic (below z=0)
-        if inner_ellipse <= 0:
-            val = min(-inner_ellipse, z_bottom)
+        if inner_surface <= 0:
+            val = min(-inner_surface, z_bottom)
             if z > -10: #computing tube below 10 messes up apex
                 val = max(val, -tube)
         else:
-            val = max(outer_ellipse, -inner_ellipse)
+            val = max(outer_ellipse, -inner_surface)
 
         #to speed up computation, don't compute spiral support for the center
         center_r_xy = 10.5
         center_r_z = 28
         center_ellipse = ellipse(x, y, z, center_r_xy, center_r_z)
 
-        if outer_ellipse < 0 and center_ellipse > 0:
+        if outer_ellipse < -0.2 and center_ellipse > 0:
             spiral = spiral_support(x, y, z, n_spirals=n_spirals, helix_angle=helix_angle, on_surface=on_surface)
-            val = min(val, spiral)
+            if torus:
+                circumferential = circumferential_support(x, y, z, z_pos = np.array([-roof_thickness - 4.5, -roof_thickness - 12]), r_z = 0.75)
+                val = min(val, spiral, circumferential)
+            else:
+                val = min(val, spiral)
+               
     
     return val
 '''
@@ -274,38 +315,38 @@ def plot_contour(f, x_range, z_range, level, resolution=400, normal=False):
     else:
         # Original single plot for scalar function
         plt.figure(figsize=(10, 8))
-        
-        # Create a custom colormap: blue for negative, red for positive
-        cmap = plt.cm.RdBu_r  # Red-Blue diverging colormap
-        
-        # Plot filled contours with color coding, centered at 0
-        # Find the range of values to center the colormap
-        vmin = np.min(F)
-        vmax = np.max(F)
-        contourf = plt.contourf(x, z, F, levels=50, cmap=cmap, alpha=0.7, 
+    
+    # Create a custom colormap: blue for negative, red for positive
+    cmap = plt.cm.RdBu_r  # Red-Blue diverging colormap
+    
+    # Plot filled contours with color coding, centered at 0
+    # Find the range of values to center the colormap
+    vmin = np.min(F)
+    vmax = np.max(F)
+    contourf = plt.contourf(x, z, F, levels=50, cmap=cmap, alpha=0.7, 
                                vmin=vmin, vmax=vmax)
-        
-        # Add the black contour line at the specified level
-        plt.contour(x, z, F, levels=[level], colors='black', linewidths=2)
-        
-        # Set equal aspect ratio to preserve actual proportions
-        plt.axis('equal')
-        plt.xlabel('X')
-        plt.ylabel('Z')
-        plt.title('Cross-section at y=0 (Blue=negative, Red=positive)')
-        plt.grid(True, alpha=0.3)
-        
-        # Set the plot limits to match the input ranges
-        plt.xlim(x_range)
-        plt.ylim(z_range)
-        
-        # Add colorbar with error handling
-        try:
-            plt.colorbar(contourf, label='Function Value')
-        except:
-            print("Warning: Could not create colorbar due to data issues")
-        
-        plt.show()
+    
+    # Add the black contour line at the specified level
+    plt.contour(x, z, F, levels=[level], colors='black', linewidths=2)
+    
+    # Set equal aspect ratio to preserve actual proportions
+    plt.axis('equal')
+    plt.xlabel('X')
+    plt.ylabel('Z')
+    plt.title('Cross-section at y=0 (Blue=negative, Red=positive)')
+    plt.grid(True, alpha=0.3)
+    
+    # Set the plot limits to match the input ranges
+    plt.xlim(x_range)
+    plt.ylim(z_range)
+    
+    # Add colorbar with error handling
+    try:
+        plt.colorbar(contourf, label='Function Value')
+    except:
+        print("Warning: Could not create colorbar due to data issues")
+    
+    plt.show()
 
 def set_group_ids(mesh):
     '''
@@ -372,7 +413,7 @@ def set_group_ids(mesh):
             else:
                 group_ids[i] = 2
         '''       
-        elif abs(outer_dist) > tolerance and abs(z+0.8) < tolerance and normals[i][2] > 0:
+        elif abs(outer_dist) > tolerance and abs(z+roof_thickness) < tolerance and normals[i][2] > 0:
             # Inner wall top surface
             group_ids[i] = 1
         elif z > -0.4 and normals[i][2] <= -0.3:  
@@ -384,7 +425,7 @@ def set_group_ids(mesh):
         elif tube_dist < tolerance and z> -1.0 and abs(normals[i][2]) < 0.3:
             # Tube surface
             group_ids[i] = 3
-        elif inner_dist < tolerance and z < -0.8:
+        elif inner_dist < tolerance and z < -roof_thickness:
             # Spiral support
             group_ids[i] = 1
         else:
@@ -540,14 +581,14 @@ def create_volume_mesh(surface_mesh, max_edge_size, output_file):
             return None
 
 def process_case(case):
-    mesh_basename, n_spirals, helix_angle, resolution, on_surface = case
+    mesh_basename, n_spirals, helix_angle, resolution, on_surface, torus = case
     print(f"Processing case: {mesh_basename}")
     def f_wrapper(x, y, z):
-        return f(x, y, z, n_spirals=n_spirals, helix_angle=helix_angle, on_surface=on_surface)
+        return f(x, y, z, n_spirals=n_spirals, helix_angle=helix_angle, on_surface=on_surface, torus=torus)
                 # Extract the 0-isosurface using sequential processing
                 #print("Starting sequential marching cubes...")
 
-    x_range = np.linspace(-13.5, 13.5, resolution)
+    ''' x_range = np.linspace(-13.5, 13.5, resolution)
     y_range = np.linspace(-13.5, 13.5, resolution)
     z_range = np.linspace(-31.5, 0.5, resolution)
     SDF_array = np.zeros((resolution, resolution, resolution))
@@ -559,16 +600,14 @@ def process_case(case):
                 y = y_range[j]
                 z = z_range[k]
                 SDF_array[i, j, k] = f_wrapper(x, y, z)
-
+    '''
 
     vertices, triangles = mcubes.marching_cubes_func(
         (-13.5,-13.5,-31), (13.5,13.5,0.5),
         resolution, resolution, resolution, f_wrapper, 0
     )
 
-    # Export to OBJ file
-    #print("Exporting to OBJ file...")
-    mcubes.export_obj(vertices, triangles, 'meshes/all_cases/' + mesh_basename + '.obj', flip_normals=True)
+    mcubes.export_obj(vertices, triangles, 'meshes/thick_tip_0circ/' + mesh_basename + '.obj', flip_normals=True)
     #print("Mesh generation complete!")
 
 def main():
@@ -586,18 +625,20 @@ def main():
     resolution = 200
     
     # Spiral support parameters
-    n_spirals = [8, 9, 10]
-    helix_angle = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]  # degrees
-    on_surface = [True]
+    n_spirals = [8, 10, 12]
+    helix_angle = [20, 25, 30, 35, 40]  # degrees
+    on_surface = [False]
+    torus = [False]
     cases = []
     for n in n_spirals:
         for h in helix_angle:
             for o in on_surface:
-                if o:
-                    basename = f'ventricle_{n}_{h}_ellipsoidal'
-                else:
-                    basename = f'ventricle_{n}_{h}_cartesian'
-                cases.append((basename, n, h, resolution, o))
+                for t in torus:
+                    if o:
+                        basename = f'ventricle_{n}_{h}_ellipsoidal'
+                    else:
+                        basename = f'ventricle_{n}_{h}_cartesian'
+                    cases.append((basename, n, h, resolution, o, t))
 
     # For DualContour
     XMIN = -13.5
@@ -629,9 +670,10 @@ def main():
         mesh_basename = 'ventricle_DC_' + str(resolution) + '_' + str(n_spirals) + '_' + str(helix_angle)
     
     # ===== MAIN ROUTINE =====
-
+    
     # Parallelize over cases
-    with concurrent.futures.ProcessPoolExecutor() as executor:
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=3) as executor:
         futures = [
             executor.submit(
                 process_case, case
@@ -680,6 +722,7 @@ def main():
 
         # -------- Create ModelFaceID array --------
         # ModelFaceID array is created based on GroupsIds array
+        from convert_obj_to_vtp import convert_obj_to_vtp
         group_id_name = 'GroupIds'
         mesh_vtp = convert_obj_to_vtp(mesh, output_file_name, group_id_name)
     else:
@@ -691,7 +734,7 @@ def main():
     faces = mesh_vtp.faces.reshape((-1, 4))[:, 1:]
     vertices = mesh_vtp.points
 
-    mesh_tri = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    #mesh_tri = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
 
     # --- Report initial mesh status
     print("Initial mesh:")

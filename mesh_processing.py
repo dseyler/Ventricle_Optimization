@@ -10,7 +10,7 @@ import os
 import argparse
 from generate_ventricle import set_group_ids
 from convert_obj_to_vtp import convert_obj_to_vtp
-import tetgen
+#import tetgen
 
 def remesh_with_pymeshlab(input_obj, output_dir, max_edge_length=0.2):
     """
@@ -46,7 +46,6 @@ def remesh_with_pymeshlab(input_obj, output_dir, max_edge_length=0.2):
     mesh = pv.read(output_obj)
     print("Computing GroupIds...")
     mesh = set_group_ids(mesh)
-    mesh.save(output_obj)  # Save OBJ with GroupIds
     print("Converting OBJ to VTP...")
     vtp_path = os.path.join(output_dir, 'mesh-complete.exterior.vtp') #os.path.splitext(output_obj)[0] + '.vtp'
     group_id_name = 'GroupIds'
@@ -183,21 +182,20 @@ def process_directory(input_dir, output_dir, max_edge_length=0.2, plot_results=F
     # Process each file
     for i, obj_file in enumerate(obj_files, 1):
         input_path = os.path.join(input_dir, obj_file)
-        case_dir = os.path.join(output_dir, obj_file.split('.')[0] + '-mesh-complete')
+        case_dir = os.path.join(output_dir, os.path.splitext(obj_file)[0] + '-mesh-complete')
         os.makedirs(case_dir, exist_ok=True)
-        output_path = os.path.join(case_dir, obj_file)
         
         print(f"\nProcessing {i}/{len(obj_files)}: {obj_file}")
         
         try:
-            mesh_vtp, vtp_path = remesh_with_pymeshlab(input_path, output_path, max_edge_length)
+            mesh_vtp, vtp_path = remesh_with_pymeshlab(input_path, case_dir, max_edge_length)
             if tetgen:
                 tetrahedralize(mesh_vtp, case_dir, max_volume=tetgen_max_volume)
                 split_faces(case_dir)
             
             if plot_results:
                 # Plot the remeshed result
-                plot_single_mesh(mesh_vtp, f"Remeshed: {obj_file}")
+                plot_single_mesh(vtp_path, f"Remeshed: {obj_file}")
                 
         except Exception as e:
             print(f"Error processing {obj_file}: {e}")

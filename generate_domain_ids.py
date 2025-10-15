@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pyvista as pv
-from generate_ventricle import ellipse, spiral_support
+from generate_ventricle import ellipse, spiral_support, circumferential_support
 import os
 import argparse
 
@@ -9,15 +9,17 @@ import argparse
 This script generates a .dat file with the domain ids for a synthetic ventricle.
 Domain_id = 1: shell
 Domain_id = 2: roof
-Domain_id = 3: spiral support
+Domain_id = 3: support (spiral or circumferential)
 '''
+
+roof_thickness = 2.0
 
 def generate_domain_ids(filename):
     '''
     This function generates a .dat file with the domain ids for a synthetic ventricle.
     Domain_id = 1: shell
     Domain_id = 2: roof
-    Domain_id = 3: spiral support
+    Domain_id = 3: support (spiral or circumferential)
     '''
 
     # Load .vtu mesh of the ventricle
@@ -26,10 +28,17 @@ def generate_domain_ids(filename):
     # Extract parameters from parent folder name
     file_string = filename.split('/')[-2]
     try:
-        _, n_spirals, helix_angle, surf_tag = file_string.split('_')
+        parts = file_string.split('_')
+        # Expected patterns: ventricle_<n>_<angle>_<tag>
+        # where <tag> in {c, e, cartesian, ellipsoidal}
+        if len(parts) >= 4:
+            _, n_spirals, helix_angle, surf_tag = parts[:4]
+        else:
+            raise ValueError('Unexpected folder name format')
         n_spirals = int(n_spirals)
         helix_angle = int(helix_angle)
-        on_surface = surf_tag.startswith('e')
+        surf_tag = surf_tag.lower()
+        on_surface = surf_tag.startswith('e')  # 'e' or 'ellipsoidal' => True; 'c' or 'cartesian' => False
     except Exception as e:
         raise ValueError(f'Could not parse parameters from folder name: {file_string}') from e
     print(f'n_spirals: {n_spirals}\nhelix_angle: {helix_angle}\non_surface: {on_surface}')
@@ -52,15 +61,18 @@ def generate_domain_ids(filename):
         element = mesh.extract_cells(global_element_ids == id)
         #assert len(element) == 1, "Multiple elements found for global_element_ids = " + str(id)
         center = element.center
-        if center[2] >= -0.8:
+        if center[2] >= -roof_thickness:
             domain_ids[id-1] = 2
         elif ellipse(center[0], center[1], center[2], r_xyi, r_zi) >= 0.05:
             domain_ids[id-1] = 1
         else:
             ellipse_distance = -ellipse(center[0], center[1], center[2], r_xyi, r_zi)
             spiral_support_distance = spiral_support(center[0], center[1], center[2], n_spirals=n_spirals, helix_angle=helix_angle, on_surface=on_surface)
-            bottom_distance = -0.8 - center[2]
-            if spiral_support_distance < ellipse_distance +0.1 and spiral_support_distance < bottom_distance:
+            #circumferential_support_distance = circumferential_support(center[0], center[1], center[2])
+            support_distance = spiral_support_distance #min(spiral_support_distance)#, circumferential_support_distance)
+            bottom_distance = -roof_thickness - center[2]
+            # Assign support (Domain 3) if either support is the closest structure
+            if support_distance < ellipse_distance + 0.1 and support_distance < bottom_distance:
                 domain_ids[id-1] = 3
             elif ellipse_distance < bottom_distance:
                 domain_ids[id-1] = 1
